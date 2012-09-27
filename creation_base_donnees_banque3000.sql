@@ -1,3 +1,18 @@
+/* Binome : Haddad Mayas - Hocini Merwan */
+
+/* La base de donnees suivante implemente le cahier des charges partiel suivant :
+	-Un client s'inscris chez nous grace à son login oracle, il ne peut s'inscrire qu'une seule fois. 
+	-Il ne peut etre proprietaire que d'un seul compte courant (par protocole), mais de plusieurs comptes epargne
+	-Les comptes epargne et courants sont des comptes bancaires, mais chacun se specialise. Par exemple : compte epargne doit 
+	reverser un interet a son proprietaire, a diverses echeances.
+	-Une transaction doit pouvoir etre retracee en cas de litige, celle-ci doit permettre de retrouver les acteur de la transac.
+	-La banque peut accorder des credits a ses clients a des taux variables.	
+	-On doit savoir qui est a decouvert pour prelever des penalites.
+	-Il est tres utile de savoir quels comptes et clients ayant ete a decouvert (afin de definir l'interet sur un pret eventuel),
+	pire pour les comptes ayant ete deja bloques.
+	-Les differentes valeurs du solde d'un compte au travers le temps doivent etre sauvgardees pour des services stastiques au client.
+	-Un client se voit ouvrir un compte web pour la gestion de son compte courant et de son/ses compte(s) epargne.
+*/
 drop table client CASCADE CONSTRAINTS;
 drop table compte CASCADE CONSTRAINTS;
 drop table compte_epargne CASCADE CONSTRAINTS;
@@ -12,7 +27,6 @@ drop table compte_web_client CASCADE CONSTRAINTS;
 -------------------------------------------------
 drop SEQUENCE seq_id_compte;
 drop SEQUENCE seq_id_transac;
-drop SEQUENCE seq_id_client;
 -------------------------------------------------
 /* Creation de la table "client" */
 /* Pour garantir qu'un client s'inscrive qu'une seule fois l'id retenu est le login Oracle*/
@@ -107,5 +121,4 @@ create table suivi_solde_compte(id_compte number(5) REFERENCES compte(id_compte)
 
 /* Creation de la table "compte_web_client" */
 /* Permettra au client de gerer ses comptes via la plateforme web */
-create table compte_web_client(id_compte number PRIMARY KEY, id_client varchar2(10) REFERENCES client(id_client), mail_client varchar2(50), mot_de_passe varchar);
-
+create table compte_web_client(id_compte number PRIMARY KEY, id_client varchar2(10) REFERENCES client(id_client), mail_client varchar2(50), mot_de_passe varchar2(50));
