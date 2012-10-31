@@ -10,27 +10,25 @@
 	-On doit savoir qui est a decouvert pour prelever des penalites.
 	-Il est tres utile de savoir quels comptes et clients ayant ete a decouvert (afin de definir l'interet sur un pret eventuel),
 	pire pour les comptes ayant ete deja bloques.
-	-Les differentes valeurs du solde d'un compte au travers le temps doivent etre sauvgardees pour des services stastiques au client.
+	-Les differentes valeurs du solde d'un compte a travers le temps doivent etre sauvgardees pour des services stastiques au client.
 	-Un client se voit ouvrir un compte web pour la gestion de son compte courant et de son/ses compte(s) epargne.
 */
 drop table client CASCADE CONSTRAINTS;
 drop table compte CASCADE CONSTRAINTS;
-drop table compte_epargne CASCADE CONSTRAINTS;
-drop table compte_courant CASCADE CONSTRAINTS;
 drop table transaction CASCADE CONSTRAINTS;
-drop table creance_en_cours CASCADE CONSTRAINTS;
-drop table decouvert_en_cours CASCADE CONSTRAINTS;
-drop table ct_deja_concours CASCADE CONSTRAINTS;
-drop table ct_deja_bloque CASCADE CONSTRAINTS;
-drop table suivi_solde_compte CASCADE CONSTRAINTS;
-drop table compte_web_client CASCADE CONSTRAINTS;
+drop table id_cci_login_oracle CASCADE CONSTRAINTS;
 -------------------------------------------------
 drop SEQUENCE seq_id_compte;
 drop SEQUENCE seq_id_transac;
 -------------------------------------------------
+
+-------------------------------------------------------------------------------------------------------------------------------
+-- Creation des tables
+-------------------------------------------------------------------------------------------------------------------------------
+
 /* Creation de la table "client" */
 /* Pour garantir qu'un client s'inscrive qu'une seule fois l'id retenu est le login Oracle*/
-create table Client(id_client varchar2(10) PRIMARY KEY, nom_client varchar2(20),date_inscription date,activite varchar2(10));
+create table Client(id_client varchar2(10) PRIMARY KEY,date_inscription date);
 
 -------------------------------------------------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------------------------------
@@ -42,24 +40,12 @@ create table Client(id_client varchar2(10) PRIMARY KEY, nom_client varchar2(20),
 /* solde_compte : Une somme d'argent est un nombre reel positif, le solde peut etre negatif */
 /* code_secret : Le code secret est un nombre a 4 chiffres, hache en md5 */
 create table Compte(id_compte number(5) PRIMARY KEY,
-id_client varchar2(12) REFERENCES Client(id_client),
-etat_compte number(1),
-concours_autorise number(7,2),
+id_client varchar2(10) REFERENCES Client(id_client),
 solde_compte number(7,2),code_secret varchar2(50),
-date_creation date,
-constraint ch_sc check (solde_compte>=-1.0*concours_autorise));					
+date_creation date);
 
 /* Creation de la sequence qui definira les id_compte */
 create SEQUENCE seq_id_compte;
-
-/* Creation de la table compte courant */
-create table Compte_courant(id_client varchar2(12) UNIQUE,id_compte number(5) REFERENCES Compte(id_compte));  
-		    
-
-/* Creation de la table compte epargne */ 
-/* Pourcentage a reverser a la prochaine echeance à diviser par 100*/
-create table Compte_epargne(id_compte number(5) REFERENCES Compte(id_compte),taux_d_epargne int,prochaine_echeance date);
-
 -------------------------------------------------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------------------------------
 
@@ -68,57 +54,128 @@ create table Compte_epargne(id_compte number(5) REFERENCES Compte(id_compte),tau
 /* Le nom de la banque du compte crediteur. NB : Il existe 2 banques dans l'environnement, leurs noms sont uniques */ 
 /* montant de la transaction */
 /* vaut 1 si la transation a reussi, 0 sinon */
-create table Transaction(id_transaction int PRIMARY KEY,id_compte_debiteur int,banque_compte_debiteur varchar(10),id_compte_crediteur int,banque_compte_crediteur varchar(10),montant number(7,2),status number(1));
+create table Transaction(id_transaction int PRIMARY KEY,idCci_debiteur number, idCci_crediteur number,montant number(7,2),moment date);
 			 
 /* Creation de la sequence qui definira les id_transac */
 create SEQUENCE seq_id_transac;
 
--------------------------------------------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------------------------------------------
 
-/* Creation de la table "creance_en_cours" */
-/* Taux d'interet sur la creance octroyee */
-/* Prochaine echeance pour le prochain prelevement sur le compte courant */
-/* Montant de du restant */
-create table creance_en_cours(id_creance_en_cours number(5) PRIMARY KEY,taux_interet int,prochaine_echeance date,creance_restante number(7,2));   
-
+/* Creation de la table qui permettra de relier le siret d'un client a son login oracle */
+create table id_cci_login_oracle(login_oracle varchar2(10) REFERENCES client(id_client), id_client_cci number UNIQUE);
 
 -------------------------------------------------------------------------------------------------------------------------------
+-- Creation des vues 
 -------------------------------------------------------------------------------------------------------------------------------
 
-/* Creation de la table "decouvert_en_cours" */
-/* Penalites journaliere sur le decouvert */
-/* Prochaine echeance pour le bloquage du compte courant */
-create table decouvert_en_cours(id_decouvert_en_cours number(5) PRIMARY KEY,penalites_journalieres int,date_butoire date);              
+/* Par convention tous les noms de vues ont le prefixe "vue_" */
+
+/* Creation de la vue client */
+create view vue_client 
+as
+select * from client; 
 
 
--------------------------------------------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------------------------------------------
+/*************************************** COUCHE APPLICATION ***************************************/
+------------------------------------------------------------
+-- Package des procedures et fonctions accessibles qu'a nous
+------------------------------------------------------------
+create or replace package private as
+function isAuth(idCci in id_cci_login_oracle.id_client_cci%type) return boolean;
+function getIdcFrmIdcte(idCompte in compte)
+end private;
+/
 
-/* Creation de la table "ct_deja_concours" */
-/* On garde les comptes ayant deja eu recourt au decouvert */
-create table ct_deja_concours(id_compte number(5) REFERENCES compte(id_compte),date_dernier_concours date);
+/* Corps du package private */
+create or replace package body private as 
 
--------------------------------------------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------------------------------------------
+--Corps procedure ouvrirCompte(idCci)
+function isAuth(idCci in id_cci_login_oracle.id_client_cci%type) return boolean is 
+usr_login varchar2(10);
+b boolean;
+cursor c is select login_oracle from id_cci_login_oracle where id_client_cci = idCci;
+begin
+ b:=false;
+ select user into usr_login from dual;
+ for x in c loop
+  if x.login_oracle = usr_login then 
+   b:=true;
+   exit when c%notfound;
+  end if;
+ end loop;
+ return b;
+end isAuth;
+end private;
+/
 
-/* Creation de la table "ct_deja_bloque" */
-/* On garde les ctes ayant deja ete bloques */
-create table ct_deja_bloque(id_compte number(5) REFERENCES compte(id_compte),date_dernier_bloquage date);
+create or replace function get_login(idCci in id_cci_login_oracle.id_client_cci%type) return client.id_client%type is
+login id_cci_login_oracle.login_oracle%type;
+begin 
+select login_oracle into login from id_cci_login_oracle where id_client_cci=idCci;
+return login; 
+end;
+/
 
 
--------------------------------------------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------------------------------------------
 
-/* Creation de la table "suivi_solde_compte" */
-/* Permet de dresser un historique des soldes d'un compte */
-/* Le solde du compte */
-/* Pour savoir a quel moment le nouveau solde a eu lieu */
-create table suivi_solde_compte(id_compte number(5) REFERENCES compte(id_compte),nouveau_solde number(7,2),moment_solde date); 
+-------------------------------------------------------------------
+-- Procedures et fonctions accessibles a tous les users
+-------------------------------------------------------------------
 
--------------------------------------------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------------------------------------------
+create or replace procedure grantAllUsers is
+cursor c is select user_name from users_tab;
+begin
+for x in c loop
+execute immediate 'grant execute on ouvertureCompte to '||x.user_name; 
+end loop;
+end;
+/ 
 
-/* Creation de la table "compte_web_client" */
-/* Permettra au client de gerer ses comptes via la plateforme web */
-create table compte_web_client(id_compte number PRIMARY KEY, id_client varchar2(10) REFERENCES client(id_client), mail_client varchar2(50), mot_de_passe varchar2(50));
+grant execute on ouvertureCompte to sbazin10_a;
+
+create or replace procedure ouvertureCompte(idCci in id_cci_login_oracle.id_client_cci%type) is 
+usr_login varchar2(10);
+begin
+select user into usr_login from dual;
+if private.isAuth(idCci)=false then
+insert into client(id_client) values (usr_login);
+insert into id_cci_login_oracle(login_oracle,id_client_cci) values (usr_login,idCci);
+insert into compte(id_compte,id_client,solde_compte) values (seq_id_compte.nextval,usr_login,2000);
+execute immediate 'grant execute on consultationCompte to '||usr_login;
+execute immediate 'grant execute on consultationSolde to '|| usr_login;
+end if;
+end;
+/
+
+create or replace procedure inscriptionCci(loginCci in client.id_client%type) is
+siret id_cci_login_oracle.id_client_cci%type;
+text varchar2(250);
+nomBanque varchar2(10);
+myLogin varchar2(10);
+begin
+nomBanque:='Banque3000';
+myLogin:='mhadda1_a';
+text :='call '||loginCci||'.inscriptionBanqueCci(:1,:2,:3)';
+execute immediate text using in nomBanque, in myLogin, out siret;
+end;
+/
+execute inscriptionCci('rkeophi_a');
+-----------------------------------------------------------------
+-- Package des procedures et fonctions accessibles qu'aux clients
+-----------------------------------------------------------------
+/* En tete du package clients */
+--Corps procedure consultationCompte
+create or replace procedure consultationCompte(idCci in id_cci_login_oracle.id_client_cci%type) is
+begin
+if isAuth(idCci) then
+select idCci_debiteur,idCci_crediteur,montant,into moment idcc,idcd,m,t from transaction where idCci_debiteur = idCci OR idCci_crediteur = idCci
+end;
+/
+
+--Corps procedure consultation solde
+create or replace procedure consultationSolde(idCci in id_cci_login_oracle.id_client_cci%type) is 
+s compte.solde_compte%type;
+begin
+select solde_compte into s from compte where id_client=get_login(idCci);
+dbms_output.put_line('votre solde est de :'||s||' Euros');
+end;
+/
