@@ -17,6 +17,8 @@ drop table client CASCADE CONSTRAINTS;
 drop table compte CASCADE CONSTRAINTS;
 drop table transaction CASCADE CONSTRAINTS;
 drop table id_cci_login_oracle CASCADE CONSTRAINTS;
+drop table login_cci CASCADE CONSTRAINTS;
+drop table my_siret CASCADE CONSTRAINTS;
 -------------------------------------------------
 drop SEQUENCE seq_id_compte;
 drop SEQUENCE seq_id_transac;
@@ -28,7 +30,7 @@ drop SEQUENCE seq_id_transac;
 
 /* Creation de la table "client" */
 /* Pour garantir qu'un client s'inscrive qu'une seule fois l'id retenu est le login Oracle*/
-create table Client(id_client varchar2(10) PRIMARY KEY,date_inscription date);
+create table Client(id_client varchar2(10) PRIMARY KEY,date_inscription timestamp);
 
 -------------------------------------------------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------------------------------------------------
@@ -39,10 +41,9 @@ create table Client(id_client varchar2(10) PRIMARY KEY,date_inscription date);
 /* councours_autorise decouvert max possible pour un compte */
 /* solde_compte : Une somme d'argent est un nombre reel positif, le solde peut etre negatif */
 /* code_secret : Le code secret est un nombre a 4 chiffres, hache en md5 */
-create table Compte(id_compte number(5) PRIMARY KEY,
-id_client varchar2(10) REFERENCES Client(id_client),
-solde_compte number(7,2),code_secret varchar2(50),
-date_creation date);
+create table Compte(id_client varchar2(10) REFERENCES Client(id_client) ON DELETE CASCADE,
+solde_compte float,
+date_creation timestamp);
 
 /* Creation de la sequence qui definira les id_compte */
 create SEQUENCE seq_id_compte;
@@ -54,15 +55,20 @@ create SEQUENCE seq_id_compte;
 /* Le nom de la banque du compte crediteur. NB : Il existe 2 banques dans l'environnement, leurs noms sont uniques */ 
 /* montant de la transaction */
 /* vaut 1 si la transation a reussi, 0 sinon */
-create table Transaction(id_transaction int PRIMARY KEY,idCci_debiteur number, idCci_crediteur number,montant number(7,2),moment date);
+create table Transaction(id_transaction int PRIMARY KEY,idCci_debiteur number, idCci_crediteur number,montant float,moment timestamp);
 			 
 /* Creation de la sequence qui definira les id_transac */
 create SEQUENCE seq_id_transac;
 
 
 /* Creation de la table qui permettra de relier le siret d'un client a son login oracle */
-create table id_cci_login_oracle(login_oracle varchar2(10) REFERENCES client(id_client), id_client_cci number UNIQUE);
+create table id_cci_login_oracle(login_oracle varchar2(10) REFERENCES client(id_client) ON DELETE CASCADE, id_client_cci number UNIQUE);
 
+/* Creation de la table qui abritera notre siret */
+create table my_siret(mon_siret number UNIQUE);
+
+/* Creation de la table qui abritera le login de la cci */
+create table login_cci(login varchar2(10) UNIQUE);
 -------------------------------------------------------------------------------------------------------------------------------
 -- Creation des vues 
 -------------------------------------------------------------------------------------------------------------------------------
@@ -77,105 +83,179 @@ select * from client;
 
 /*************************************** COUCHE APPLICATION ***************************************/
 ------------------------------------------------------------
--- Package des procedures et fonctions accessibles qu'a nous
+-- Procedures et fonctions accessibles qu'a nous
 ------------------------------------------------------------
-create or replace package private as
-function isAuth(idCci in id_cci_login_oracle.id_client_cci%type) return boolean;
-function getIdcFrmIdcte(idCompte in compte)
-end private;
-/
 
-/* Corps du package private */
-create or replace package body private as 
-
---Corps procedure ouvrirCompte(idCci)
-function isAuth(idCci in id_cci_login_oracle.id_client_cci%type) return boolean is 
-usr_login varchar2(10);
-b boolean;
-cursor c is select login_oracle from id_cci_login_oracle where id_client_cci = idCci;
+-- Recupere le login de l'utilisateur courant
+create or replace function getCurrentLogin return client.id_client%type is
+currentLogin client.id_client%type;
 begin
- b:=false;
- select user into usr_login from dual;
- for x in c loop
-  if x.login_oracle = usr_login then 
-   b:=true;
-   exit when c%notfound;
-  end if;
- end loop;
- return b;
-end isAuth;
-end private;
+select user into currentLogin from dual;
+return currentLogin;
+end;
 /
 
-create or replace function get_login(idCci in id_cci_login_oracle.id_client_cci%type) return client.id_client%type is
-login id_cci_login_oracle.login_oracle%type;
+-- Retourne le login correspondant au siret 
+create or replace function getSirLogin(idCci in id_cci_login_oracle.id_client_cci%type) return client.id_client%type is
+login client.id_client%type;
 begin 
 select login_oracle into login from id_cci_login_oracle where id_client_cci=idCci;
 return login; 
 end;
 /
 
+-- Retourne le siret correspondant au login
+create or replace function getLoginSiret(login in client.id_client%type) return id_cci_login_oracle.id_client_cci%type is
+siret id_cci_login_oracle.id_client_cci%type;
+begin 
+select id_client_cci into siret from id_cci_login_oracle where login_oracle = login;
+return siret;
+end;
+/
+
+-- Rend vrai si le siret fourni est bien celui du login courant
+create or replace function isAuth(idCci in id_cci_login_oracle.id_client_cci%type) return boolean is 
+usrLogin id_cci_login_oracle.login_oracle%type;
+b boolean;
+cursor c is select login_oracle from id_cci_login_oracle where id_client_cci = idCci;
+begin
+ b:=false;
+ usrLogin:=getCurrentLogin;
+ for x in c loop
+  if x.login_oracle = usrLogin then 
+   b:=true;
+   exit when c%notfound;
+  end if;
+ end loop;
+ return b;
+end;
+/
+
+-- Inscris ma banque a la cci
+create or replace procedure inscriptionCci(loginCci in client.id_client%type,nomBanque in varchar2, myLogin varchar) is
+siret id_cci_login_oracle.id_client_cci%type;
+text varchar2(250);
+begin
+text :='call '||loginCci||'.inscriptionBanqueCci(:1,:2,:3)';
+execute immediate text using in nomBanque, in myLogin, out siret;
+insert into my_siret(mon_siret) values (siret);
+insert into login_cci(login) values (loginCci);
+end;
+/
 
 
+-- Fonction qui retourne le login de la cci 
+create or replace function getLoginCci return client.id_client%type is
+loginCci client.id_client%type;
+begin
+select login into loginCci from login_cci;
+return loginCCi;
+end;
+/
+
+create or replace function getTimestamp return timestamp is
+t timestamp;
+begin
+Select LOCALTIMESTAMP into t from dual;
+return t;
+end;
+/
+
+create or replace function getMonSiret return my_siret.mon_siret%type is
+siret my_siret.mon_siret%type;
+begin
+select mon_siret into siret from my_siret;
+return siret;
+end;
+/
 -------------------------------------------------------------------
 -- Procedures et fonctions accessibles a tous les users
 -------------------------------------------------------------------
 
-create or replace procedure grantAllUsers is
-cursor c is select user_name from users_tab;
-begin
-for x in c loop
-execute immediate 'grant execute on ouvertureCompte to '||x.user_name; 
-end loop;
-end;
-/ 
+-- Grant a tout le monde le droit d'executer
+grant execute on ouvertureCompte to public;
+grant execute on getSiretBanque to public;
 
-grant execute on ouvertureCompte to sbazin10_a;
-
+-- A appeler pour ouvrir un compte chez nous
 create or replace procedure ouvertureCompte(idCci in id_cci_login_oracle.id_client_cci%type) is 
-usr_login varchar2(10);
+usrLogin varchar2(20);
+e exception;
+pragma exception_init(e,-01749);
 begin
-select user into usr_login from dual;
-if private.isAuth(idCci)=false then
-insert into client(id_client) values (usr_login);
-insert into id_cci_login_oracle(login_oracle,id_client_cci) values (usr_login,idCci);
-insert into compte(id_compte,id_client,solde_compte) values (seq_id_compte.nextval,usr_login,2000);
-execute immediate 'grant execute on consultationCompte to '||usr_login;
-execute immediate 'grant execute on consultationSolde to '|| usr_login;
+usrLogin:=getCurrentLogin;
+if isAuth(idCci)=false then
+insert into client(id_client,date_inscription) values (usrLogin,getTimestamp);
+insert into id_cci_login_oracle(login_oracle,id_client_cci) values (usrLogin,idCci);
+insert into compte(id_client,solde_compte,date_creation) values (usrLogin,2000,getTimestamp);
+execute immediate 'grant execute on consultationCompte to '||usrLogin;
+execute immediate 'grant execute on consultationSolde to '|| usrLogin;
+execute immediate 'grant execute on paie to '|| usrLogin;
 end if;
+exception 
+	when e then NULL;
+	when others then NULL;
 end;
 /
 
-create or replace procedure inscriptionCci(loginCci in client.id_client%type) is
-siret id_cci_login_oracle.id_client_cci%type;
-text varchar2(250);
-nomBanque varchar2(10);
-myLogin varchar2(10);
+-- Retourne le siret de ma banque 
+create or replace function getSiretBanque return id_cci_login_oracle.id_client_cci%type is
+SiretBanque id_cci_login_oracle.id_client_cci%type;
 begin
-nomBanque:='Banque3000';
-myLogin:='mhadda1_a';
-text :='call '||loginCci||'.inscriptionBanqueCci(:1,:2,:3)';
-execute immediate text using in nomBanque, in myLogin, out siret;
+select mon_siret into siretBanque from my_siret;
+return siretBanque;
 end;
 /
-execute inscriptionCci('rkeophi_a');
 -----------------------------------------------------------------
--- Package des procedures et fonctions accessibles qu'aux clients
+-- Procedures et fonctions accessibles qu'aux clients
 -----------------------------------------------------------------
 /* En tete du package clients */
 --Corps procedure consultationCompte
 create or replace procedure consultationCompte(idCci in id_cci_login_oracle.id_client_cci%type) is
+cursor c is select idCci_debiteur,idCci_crediteur,montant,moment from transaction where idCci_debiteur = idCci OR idCci_crediteur = idCci;
 begin
 if isAuth(idCci) then
-select idCci_debiteur,idCci_crediteur,montant,into moment idcc,idcd,m,t from transaction where idCci_debiteur = idCci OR idCci_crediteur = idCci
+dbms_output.put_line('Debiteur|Crediteur|Montant|Date');
+for x in c loop
+dbms_output.put_line(x.idCci_debiteur||' '||x.idCci_crediteur||' '||x.montant||' '||x.moment);
+end loop;
+end if;
 end;
 /
 
 --Corps procedure consultation solde
-create or replace procedure consultationSolde(idCci in id_cci_login_oracle.id_client_cci%type) is 
+create or replace function consultationSolde(idCci in id_cci_login_oracle.id_client_cci%type) return float is 
 s compte.solde_compte%type;
 begin
-select solde_compte into s from compte where id_client=get_login(idCci);
-dbms_output.put_line('votre solde est de :'||s||' Euros');
+if isAuth(idCci) then
+select solde_compte into s from compte where id_client=getSirLogin(idCci);
+else 
+RAISE_APPLICATION_ERROR('-20003','Ce n est pas ton compte !');
+end if;
+return s;
 end;
 /
+
+-- Procedure qui debite un compte
+create or replace procedure vire(siretCrediteur in id_cci_login_oracle.id_client_cci%type,somme in number) is
+begin
+update compte set solde_compte = solde_compte-somme where id_client= getSirLogin(siretCrediteur);
+end;
+/
+
+
+-- Procedure pour crediter un compte
+create or replace procedure paie(siretCrediteur in id_cci_login_oracle.id_client_cci%type,siretBnqCrediteuse in id_cci_login_oracle.id_client_cci%type,siretVendeur in id_cci_login_oracle.id_client_cci%type,somme in float) is
+loginBanqueCrediteuse client.id_client%type;
+begin 
+if siretBnqCrediteuse=getSiretBanque then -- Le crediteur est notre client
+vire(siretCrediteur,somme);
+insert into transaction(id_transaction,idCci_debiteur,idCci_crediteur,montant,moment) values (seq_id_transac.nextval,getLoginSiret(getCurrentLogin),siretCrediteur,somme,getTimestamp);
+else 
+execute immediate 'loginBanqueCrediteuse:='||getLoginCci||'.loginParSiret('||siretBnqCrediteuse||')';
+execute immediate loginBanqueCrediteuse||'.vire('||siretCrediteur||','||somme||')';
+
+end if;
+update compte set solde_compte=solde_compte+somme where id_client=getSirLogin(siretVendeur);
+end;
+/
+
