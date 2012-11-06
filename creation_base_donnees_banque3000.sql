@@ -31,7 +31,7 @@ drop function getLoginCci;
 drop function getTimestamp;
 drop function getSiretBanque;
 drop function consultationSolde
-consultationCompte;
+drop consultationCompte;
 drop procedure vire;
 drop procedure paie;
 drop procedure ouvertureCompte;
@@ -165,6 +165,7 @@ begin
 end;
 /
 
+-- Fonction qui retourne le timestamp courant
 create or replace function getTimestamp return timestamp is
 t timestamp;
 begin
@@ -172,28 +173,17 @@ begin
 	return t;
 end;
 /
--------------------------------------------------------------------
--- Procedures et fonctions accessibles a tous les users
--------------------------------------------------------------------
 
--- A appeler pour ouvrir un compte chez nous
-create or replace procedure ouvertureCompte(idCci in id_cci_login_oracle.id_client_cci%type) is 
-usrLogin varchar2(20);
-e exception;
-pragma exception_init(e,-01749);
-begin
-	usrLogin:=getCurrentLogin;
-	if isAuth(idCci)=false then
-		insert into client(id_client,date_inscription) values (usrLogin,getTimestamp);
-		insert into id_cci_login_oracle(login_oracle,id_client_cci) values (usrLogin,idCci);
-		insert into compte(id_client,solde_compte,date_creation) values (usrLogin,1000,getTimestamp);
-		execute immediate 'grant execute on consultationCompte to '||usrLogin;
-		execute immediate 'grant execute on consultationSolde to '|| usrLogin;
-		execute immediate 'grant execute on paie to '|| usrLogin;
+-- Fonction qui check si le client s'est acquite des frais cci
+create or replace function checkAcqCci(siretClient id_cci_login_oracle.id_client_cci%type) return boolean is
+n int;
+begin	
+	execute immediate 'select count(*) into n from '||getLoginCci||'.acteur_cci where siret='||siretClient;	
+	if n>0 then
+		execute immediate 'delete from '||getLoginCci||'.acteur_cci where siret='||siretClient;
+		return true; 	
 	end if;
-	exception -- Lorsqu'on s'inscris chez nous, le grant génère une exception, on l'a rattrape pour po faire de grimace :)
-		when e then NULL;
-		when others then NULL;
+	return false;
 end;
 /
 
@@ -206,15 +196,10 @@ begin
 end;
 /
 
--- Grant a tout le monde le droit d'executer
-grant execute on ouvertureCompte to public;
-grant execute on getSiretBanque to public;
-
 -----------------------------------------------------------------
 -- Procedures et fonctions accessibles qu'aux clients
 -----------------------------------------------------------------
 /* En tete du package clients */
---Corps procedure consultationCompte
 create or replace procedure consultationCompte(idCci in id_cci_login_oracle.id_client_cci%type) is
 cursor c is select idCci_debiteur,idCci_crediteur,montant,moment from transaction where idCci_debiteur = idCci OR idCci_crediteur = idCci;
 begin
@@ -256,11 +241,44 @@ begin
 		vire(siretCrediteur,somme);
 		insert into transaction(id_transaction,idCci_debiteur,idCci_crediteur,montant,moment) values (seq_id_transac.nextval,getLoginSiret(getCurrentLogin),siretCrediteur,somme,getTimestamp);
 	else -- Le crediteur (acheteur) n'est pas notre client
-		execute immediate loginBanqueCrediteuse||'.vire('||siretCrediteur||','||somme||')';
+		execute immediate 'select '||getLoginCci||'.loginParSiret('||siretBnqCrediteuse||') from Dual' into loginBanqueCrediteuse;
+		dbms_output.put_line (loginBanqueCrediteuse||'.vire('||siretCrediteur||','||somme||')');
 	end if;
 	update compte set solde_compte=solde_compte+somme where id_client=getSirLogin(siretVendeur);
 end;
 /
+
+-------------------------------------------------------------------
+-- Procedures et fonctions accessibles a tous les users
+-------------------------------------------------------------------
+
+-- A appeler pour ouvrir un compte chez nous
+create or replace procedure ouvertureCompte(idCci in id_cci_login_oracle.id_client_cci%type) is 
+usrLogin varchar2(20);
+e exception;
+pragma exception_init(e,-01749);
+begin
+	usrLogin:=getCurrentLogin;
+	if isAuth(idCci)=false then
+		insert into client(id_client,date_inscription) values (usrLogin,getTimestamp);
+		insert into id_cci_login_oracle(login_oracle,id_client_cci) values (usrLogin,idCci);
+		insert into compte(id_client,solde_compte,date_creation) values (usrLogin,1000,getTimestamp);
+		execute immediate 'grant execute on consultationCompte to '||usrLogin;
+		execute immediate 'grant execute on consultationSolde to '|| usrLogin;
+		execute immediate 'grant execute on paie to '|| usrLogin;
+		if (checkAcqCci(idCci)=true) then dbms_output.put_line('cc'); paie(idCci,getSiretBanque,getLoginSiret(getLoginCci),100); end if;
+	end if;
+	exception -- Lorsqu'on s'inscris chez nous, le grant génère une exception, on l'a rattrape pour po faire de grimace :)
+		when e then NULL;
+		when others then NULL;
+end;
+/
+
+
+-- Grant a tout le monde le droit d'executer
+grant execute on ouvertureCompte to public;
+grant execute on getSiretBanque to public;
+
 /*
 -- Trigger pour le prelevement des frais d'inscription a la cci
 create or replace trigger prelevementFraisCci after insert on client 
@@ -277,11 +295,16 @@ begin
 		paie(getLoginSiret(:new.id_client),getSiretBanque,getLoginSiret(getLoginCci),(:new.solde_compte>:old.solde_compte)*0.1);
 end;
 /
-
+*/
 -- Trigger pour le prelevement des frais banquaires 
-create or replace trigger prelevementFraisBanquaire after update on compte 
+create or replace trigger prelevementFraisBanquaire after update on compte for each row
 begin
-	if (:new.id_client<>getSiretBanque and :new.solde_compte>:old.solde_compte) then -- On ne preleve pas de taxe sur la cci et on preleve sur le 											      -- debiteur 
-		paie(getLoginSiret(:new.id_client),getSiretBanque,getLoginSiret(getLoginCci),(:new.solde_compte>:old.solde_compte)*0.05);
+	if (/*:new.id_client<>getSiretBanque and */:new.solde_compte>:old.solde_compte) then /* On ne preleve pas de taxe sur la cci et on preleve sur le debiteur*/ 
+		--dbms_output.put_line(getLoginSiret(:new.id_client)||'|'||((:new.solde_compte-:old.solde_compte)*0.05));
+		insert into prelevement(siretClient,monSiret,montant) values (getLoginSiret(:new.id_client),getSiretBanque,((:new.solde_compte-:old.solde_compte)*0.05));		
+		paie(getLoginSiret(:new.id_client),getSiretBanque,getSiretBanque,((:new.solde_compte-:old.solde_compte)*0.05));
+end if;
 end;
-/*/
+/
+
+
