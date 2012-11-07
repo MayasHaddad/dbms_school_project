@@ -20,7 +20,6 @@ drop table id_cci_login_oracle CASCADE CONSTRAINTS;
 drop table login_cci CASCADE CONSTRAINTS;
 drop table my_siret CASCADE CONSTRAINTS;
 -------------------------------------------------
-drop SEQUENCE seq_id_compte;
 drop SEQUENCE seq_id_transac;
 -------------------------------------------------
 drop function getCurrentLogin;
@@ -30,13 +29,14 @@ drop function isAuth;
 drop function getLoginCci;
 drop function getTimestamp;
 drop function getSiretBanque;
-drop function consultationSolde
-drop consultationCompte;
+drop function consultationSolde;
+drop procedure consultationCompte;
 drop procedure vire;
 drop procedure paie;
 drop procedure ouvertureCompte;
 drop procedure inscriptionCci;
-
+drop view vue_client;
+drop view vue_compte;
 
 -------------------------------------------------------------------------------------------------------------------------------
 -- Creation des tables
