@@ -242,7 +242,8 @@ begin
 		insert into transaction(id_transaction,idCci_debiteur,idCci_crediteur,montant,moment) values (seq_id_transac.nextval,getLoginSiret(getCurrentLogin),siretCrediteur,somme,getTimestamp);
 	else -- Le crediteur (acheteur) n'est pas notre client
 		execute immediate 'select '||getLoginCci||'.loginParSiret('||siretBnqCrediteuse||') from Dual' into loginBanqueCrediteuse;
-		dbms_output.put_line (loginBanqueCrediteuse||'.vire('||siretCrediteur||','||somme||')');
+		dbms_output.put_line('call '||loginBanqueCrediteuse||'.vire('||siretCrediteur||','||somme||')');		
+		execute immediate 'call '||loginBanqueCrediteuse||'.vire('||siretCrediteur||','||somme||')';
 	end if;
 	update compte set solde_compte=solde_compte+somme where id_client=getSirLogin(siretVendeur);
 end;
@@ -266,7 +267,7 @@ begin
 		execute immediate 'grant execute on consultationCompte to '||usrLogin;
 		execute immediate 'grant execute on consultationSolde to '|| usrLogin;
 		execute immediate 'grant execute on paie to '|| usrLogin;
-		if (checkAcqCci(idCci)=true) then dbms_output.put_line('cc'); paie(idCci,getSiretBanque,getLoginSiret(getLoginCci),100); end if;
+		paie(idCci,getSiretBanque,getSiretBanque,100);
 	end if;
 	exception -- Lorsqu'on s'inscris chez nous, le grant génère une exception, on l'a rattrape pour po faire de grimace :)
 		when e then NULL;
@@ -278,33 +279,6 @@ end;
 -- Grant a tout le monde le droit d'executer
 grant execute on ouvertureCompte to public;
 grant execute on getSiretBanque to public;
-
-/*
--- Trigger pour le prelevement des frais d'inscription a la cci
-create or replace trigger prelevementFraisCci after insert on client 
-begin
-	if :new.id_client<>getLoginCci then -- On ne preleve pas les frais sur la cci
-		paie(getLoginSiret(:new.id_client),getSiretBanque,getLoginSiret(getLoginCci),100);
-end;
-/
-
--- Trigger pour le prelevement de la taxe de la cci
-create or replace trigger prelevementTaxeCci after update on compte 
-begin
-	if (:new.id_client<>getLoginCci and :new.solde_compte>:old.solde_compte) then -- On ne preleve pas de taxe sur la cci et on preleve sur le 											      -- debiteur 
-		paie(getLoginSiret(:new.id_client),getSiretBanque,getLoginSiret(getLoginCci),(:new.solde_compte>:old.solde_compte)*0.1);
-end;
-/
-*/
--- Trigger pour le prelevement des frais banquaires 
-create or replace trigger prelevementFraisBanquaire after update on compte for each row
-begin
-	if (/*:new.id_client<>getSiretBanque and */:new.solde_compte>:old.solde_compte) then /* On ne preleve pas de taxe sur la cci et on preleve sur le debiteur*/ 
-		--dbms_output.put_line(getLoginSiret(:new.id_client)||'|'||((:new.solde_compte-:old.solde_compte)*0.05));
-		insert into prelevement(siretClient,monSiret,montant) values (getLoginSiret(:new.id_client),getSiretBanque,((:new.solde_compte-:old.solde_compte)*0.05));		
-		paie(getLoginSiret(:new.id_client),getSiretBanque,getSiretBanque,((:new.solde_compte-:old.solde_compte)*0.05));
-end if;
-end;
-/
+grant execute on vire to public;
 
 
