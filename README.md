@@ -1,4 +1,4 @@
 dbms_school_project
 ===================
 
-Sqlplus database project
+A Sqlplus database project
